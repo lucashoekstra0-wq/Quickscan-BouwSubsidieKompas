@@ -11,46 +11,90 @@
   </head>
   <body class="bg-gray-50 text-gray-900">
     <div id="root"></div>
+
     <script type="text/babel">
+      /* =============================================
+         CONFIG – Vul SUBMIT_URL in om inzendingen op te slaan.
+         Voorbeelden:
+         - Formspree:  https://formspree.io/f/xxxxxxxx
+         - Eigen webhook/API: jouw endpoint dat JSON accepteert
+         Laat leeg ("") om alleen lokaal te bewaren en geen netwerkverzoek te doen.
+      ============================================== */
+      const SUBMIT_URL = ""; // <-- vul hier je endpoint in (bijv. Formspree-URL)
+
       const { useMemo, useState } = React;
+
       function QuickscanApp() {
         const [step, setStep] = useState(1);
         const [submitting, setSubmitting] = useState(false);
         const [showResult, setShowResult] = useState(false);
+        const [submitStatus, setSubmitStatus] = useState(null); // 'ok' | 'error' | 'skipped'
+
         const [form, setForm] = useState({
-          naam: "", bedrijfsnaam: "", kvk: "", email: "", telefoon: "", adres: "",
-          rechtsvorm: "", fte: "", sector: "", isMkb: "", omzet: "",
+          // Stap 1 (persoons-/bedrijfsgegevens)
+          naam: "", bedrijfsnaam: "", email: "", telefoon: "", adres: "",
+          fte: "", sector: "", isMkb: "",
+          // Stap 2 (energie & installaties)
           warmtepomp: "", zonnepanelen: "", andereInstallaties: "", verlichting: "",
+          // Stap 3 (milieu & materieel)
           circulaireMaterialen: "", elektrischeMachines: "", retrofit: "", laadinfrastructuur: "",
+          // Stap 4 (personeel)
           opleidingPlannen: "", heeftOpleidingsplan: "", aantalMedewerkers: "",
+          // Stap 5 (project)
           omschrijving: "", startmoment: "", eerdereSubsidie: "", eerdereSubsidieToelichting: "",
         });
+
         const update = (field, value) => setForm((f) => ({ ...f, [field]: value }));
         const steps = [1,2,3,4,5];
+
         const stepValid = useMemo(() => {
           switch (step) {
-            case 1: return (form.naam && form.bedrijfsnaam && form.email && form.sector && form.isMkb);
-            case 2: return (form.warmtepomp !== "" && form.zonnepanelen !== "" && form.verlichting !== "");
-            case 3: return (form.circulaireMaterialen !== "" && form.elektrischeMachines !== "" && form.retrofit !== "" && form.laadinfrastructuur !== "");
-            case 4: return (form.opleidingPlannen !== "" && form.heeftOpleidingsplan !== "");
-            case 5: return !!form.omschrijving;
-            default: return true;
+            case 1:
+              return (form.naam && form.bedrijfsnaam && form.email && form.sector && form.isMkb);
+            case 2:
+              return (form.warmtepomp !== "" && form.zonnepanelen !== "" && form.verlichting !== "");
+            case 3:
+              return (form.circulaireMaterialen !== "" && form.elektrischeMachines !== "" && form.retrofit !== "" && form.laadinfrastructuur !== "");
+            case 4:
+              return (form.opleidingPlannen !== "" && form.heeftOpleidingsplan !== "");
+            case 5:
+              return !!form.omschrijving;
+            default:
+              return true;
           }
         }, [step, form]);
+
         const result = useMemo(() => computeResults(form), [form]);
+
         const next = () => setStep((s) => Math.min(steps.length, s + 1));
         const prev = () => setStep((s) => Math.max(1, s - 1));
-        const handleSubmit = (e) => {
+
+        const handleSubmit = async (e) => {
           e.preventDefault();
           if (!stepValid) return;
           if (step < steps.length) { next(); return; }
+
           setSubmitting(true);
-          setTimeout(() => {
-            setSubmitting(false);
-            setShowResult(true);
-            window.scrollTo({ top: 0, behavior: "smooth" });
-          }, 400);
+          // 1) Altijd lokaal opslaan (in de browser) als extra back-up
+          try {
+            const all = JSON.parse(localStorage.getItem('quickscan_inzendingen') || '[]');
+            all.push({ ts: new Date().toISOString(), form, result });
+            localStorage.setItem('quickscan_inzendingen', JSON.stringify(all));
+          } catch {}
+
+          // 2) Naar externe endpoint sturen (indien ingesteld)
+          try {
+            const ok = await sendSubmission({ form, result });
+            setSubmitStatus(ok === null ? 'skipped' : (ok ? 'ok' : 'error'));
+          } catch {
+            setSubmitStatus('error');
+          }
+
+          setSubmitting(false);
+          setShowResult(true);
+          window.scrollTo({ top: 0, behavior: "smooth" });
         };
+
         return (
           <div className="min-h-screen">
             <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-gray-200">
@@ -65,6 +109,7 @@
                 <Progress current={step} total={steps.length} />
               </div>
             </header>
+
             <main className="max-w-4xl mx-auto px-4 py-8">
               {!showResult ? (
                 <form onSubmit={handleSubmit} className="space-y-6">
@@ -73,17 +118,15 @@
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <Text label="Naam" value={form.naam} onChange={(v) => update('naam', v)} required />
                         <Text label="Bedrijfsnaam" value={form.bedrijfsnaam} onChange={(v) => update('bedrijfsnaam', v)} required />
-                        <Text label="KvK-nummer" value={form.kvk} onChange={(v) => update('kvk', v)} />
                         <Text label="E-mailadres" type="email" value={form.email} onChange={(v) => update('email', v)} required />
                         <Text label="Telefoonnummer" value={form.telefoon} onChange={(v) => update('telefoon', v)} />
                         <Text label="Adres bedrijf" value={form.adres} onChange={(v) => update('adres', v)} />
-                        <Select label="Rechtsvorm" value={form.rechtsvorm} onChange={(v) => update('rechtsvorm', v)} options={['Eenmanszaak','VOF','BV','NV','Anders']} />
                         <Select label="Aantal medewerkers (FTE)" value={form.fte} onChange={(v) => update('fte', v)} options={['1–10','11–50','>50']} />
                         <Text label="Sector / hoofdactiviteit" value={form.sector} onChange={(v) => update('sector', v)} required />
                         <Radio label="Is uw bedrijf MKB? (EU-definitie)" value={form.isMkb} onChange={(v) => update('isMkb', v)} options={['Ja','Nee']} required />
-                        <Text label="Jaaromzet (indicatie)" value={form.omzet} onChange={(v) => update('omzet', v)} placeholder="bijv. €2.000.000" />
                       </div>
                     )}
+
                     {step === 2 && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <Radio label="Gaat u bij (ver)bouw investeren in een warmtepomp?" value={form.warmtepomp} onChange={(v) => update('warmtepomp', v)} options={['Ja','Nee','Weet ik niet']} required />
@@ -92,6 +135,7 @@
                         <TextArea label="Andere duurzame installaties (optioneel)" value={form.andereInstallaties} onChange={(v) => update('andereInstallaties', v)} placeholder="bijv. zonneboiler, energieopslag, laadpalen" />
                       </div>
                     )}
+
                     {step === 3 && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <Radio label="Gaat u milieuvriendelijke of circulaire materialen toepassen?" value={form.circulaireMaterialen} onChange={(v) => update('circulaireMaterialen', v)} options={['Ja','Nee','Weet ik niet']} required />
@@ -100,6 +144,7 @@
                         <Radio label="Heeft u (plannen voor) laadinfrastructuur voor materieel/voertuigen?" value={form.laadinfrastructuur} onChange={(v) => update('laadinfrastructuur', v)} options={['Ja','Nee','Weet ik niet']} required />
                       </div>
                     )}
+
                     {step === 4 && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <Radio label="Heeft u plannen om te investeren in opleiding/ontwikkeling van personeel?" value={form.opleidingPlannen} onChange={(v) => update('opleidingPlannen', v)} options={['Ja','Nee']} required />
@@ -107,6 +152,7 @@
                         <Text label="Hoeveel medewerkers zouden meedoen?" value={form.aantalMedewerkers} onChange={(v) => update('aantalMedewerkers', v)} placeholder="bijv. 5" />
                       </div>
                     )}
+
                     {step === 5 && (
                       <div className="grid grid-cols-1 gap-4">
                         <TextArea label="Beschrijf kort uw geplande investering(en) of project(en)" value={form.omschrijving} onChange={(v) => update('omschrijving', v)} required />
@@ -117,6 +163,7 @@
                         )}
                       </div>
                     )}
+
                     <div className="mt-6 flex items-center justify-between">
                       <div className="text-sm text-gray-500">Velden met * zijn verplicht.</div>
                       <div className="flex gap-2">
@@ -131,15 +178,17 @@
                   </Card>
                 </form>
               ) : (
-                <ResultView form={form} result={result} onReset={() => { setShowResult(false); setStep(1); }} />
+                <ResultView form={form} result={result} submitStatus={submitStatus} onReset={() => { setShowResult(false); setStep(1); setSubmitStatus(null); }} />
               )}
             </main>
+
             <footer className="max-w-4xl mx-auto px-4 pb-10 text-xs text-gray-500">
-              © {new Date().getFullYear()} Bouw Subsidie Kompas · Quickscan is indicatief; definitieve (on)geschiktheid wordt vastgesteld in het adviesgesprek en op basis van actuele regelingen.
+              © {new Date().getFullYear()} Bouw Subsidie Kompas · Quickscan is indicatief; definitieve (on)geschiktheid wordt vastgesteld in het adviesgesprek en op basis van actuele regelingen. Inzendingen worden lokaal opgeslagen en optioneel naar een externe endpoint verstuurd.
             </footer>
           </div>
         );
       }
+
       function stepSubtitle(step) {
         switch (step) {
           case 1: return "Persoons- en bedrijfsgegevens";
@@ -150,6 +199,7 @@
           default: return "";
         }
       }
+
       function Card({ title, subtitle, children }) {
         return (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
@@ -161,6 +211,7 @@
           </div>
         );
       }
+
       function Text({ label, value, onChange, placeholder, type = "text", required }) {
         return (
           <div>
@@ -171,6 +222,7 @@
           </div>
         );
       }
+
       function TextArea({ label, value, onChange, placeholder, required }) {
         return (
           <div>
@@ -181,6 +233,7 @@
           </div>
         );
       }
+
       function Radio({ label, value, onChange, options = [], required }) {
         return (
           <div>
@@ -197,6 +250,7 @@
           </div>
         );
       }
+
       function Select({ label, value, onChange, options = [] }) {
         return (
           <div>
@@ -208,6 +262,7 @@
           </div>
         );
       }
+
       function Progress({ current, total }) {
         const pct = Math.round((current / total) * 100);
         return (
@@ -219,15 +274,25 @@
           </div>
         );
       }
+
       function Pill({ children }) {
         return (
           <span className="inline-block rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 px-3 py-1 text-xs font-medium">{children}</span>
         );
       }
-      function ResultView({ form, result, onReset }) {
+
+      function ResultView({ form, result, submitStatus, onReset }) {
         return (
           <div className="space-y-6">
             <Card title="Conclusie" subtitle="Indicatie op basis van uw antwoorden (geen rechten ontleend)">
+              {submitStatus && (
+                <div className={(submitStatus === 'ok' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : submitStatus === 'skipped' ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-rose-50 text-rose-800 border-rose-200') + ' border rounded-xl p-3 mb-4 text-sm'}>
+                  {submitStatus === 'ok' && 'Inzending ontvangen. We nemen indien nodig contact op.'}
+                  {submitStatus === 'skipped' && 'Inzending lokaal opgeslagen. Externe opslag is niet geconfigureerd.'}
+                  {submitStatus === 'error' && 'Inzending kon niet worden verstuurd. Probeer later opnieuw of neem contact op.'}
+                </div>
+              )}
+
               {result.suggesties.length > 0 ? (
                 <div className="space-y-4">
                   <p className="text-gray-700">Op basis van uw plannen maakt u mogelijk kans op de onderstaande regelingen. In een adviesgesprek controleren wij de voorwaarden en stellen we de optimale route voor.</p>
@@ -251,6 +316,7 @@
                 <button onClick={onReset} className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700">Nieuwe quickscan</button>
               </div>
             </Card>
+
             <Card title="Samenvatting van uw input">
               <div className="text-sm grid grid-cols-1 md:grid-cols-2 gap-3">
                 <SummaryRow k="Naam" v={form.naam} />
@@ -269,6 +335,7 @@
                 <SummaryRow k="Startmoment" v={form.startmoment} />
               </div>
             </Card>
+
             <Card title="Vervolg" subtitle="Wij helpen met controle en aanvraag">
               <ul className="list-disc pl-5 text-gray-700 space-y-2 text-sm">
                 <li>Controle van technische specificaties en actuele voorwaarden.</li>
@@ -279,6 +346,7 @@
           </div>
         );
       }
+
       function SummaryRow({ k, v }) {
         return (
           <div className="flex items-center justify-between gap-3 border-b border-dashed border-gray-200 py-1">
@@ -287,6 +355,7 @@
           </div>
         );
       }
+
       function computeResults(f) {
         const suggesties = [];
         const toelichting = [];
@@ -294,6 +363,7 @@
         const misschien = (x) => (x || "").toLowerCase() === "weet ik niet";
         const inBouw = (f.sector || "").toLowerCase().includes("bouw");
         const isMkb = (f.isMkb || "").toLowerCase() === "ja";
+
         if (ja(f.warmtepomp) || (f.andereInstallaties || "").toLowerCase().includes("zonneboiler")) {
           suggesties.push({ code: "ISDE", naam: "ISDE – Investeringssubsidie Duurzame Energie" });
           toelichting.push("Plannen voor duurzame warmte (bijv. warmtepomp/zonneboiler) komen vaak in aanmerking.");
@@ -314,15 +384,32 @@
           suggesties.push({ code: "SLIM", naam: "SLIM – Leren & Ontwikkelen in het MKB" });
           toelichting.push("Voor MKB-bedrijven die investeren in leren & ontwikkelen is er vaak SLIM-ondersteuning.");
         }
+
         const unique = [];
         const seen = new Set();
         for (const s of suggesties) {
           if (!seen.has(s.code)) { unique.push(s); seen.add(s.code); }
         }
+
         const onzeker = [f.warmtepomp, f.zonnepanelen, f.verlichting, f.circulaireMaterialen, f.elektrischeMachines, f.retrofit, f.laadinfrastructuur].some(misschien);
         if (onzeker) { toelichting.push("Bij enkele antwoorden is nog onzekerheid. We controleren dit graag in een kosteloos adviesgesprek."); }
+
         return { suggesties: unique, toelichting };
       }
+
+      async function sendSubmission(payload) {
+        if (!SUBMIT_URL) return null; // geen externe opslag geconfigureerd
+        const res = await fetch(SUBMIT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...payload,
+            _subject: 'Quickscan inzending',
+          }),
+        });
+        return res.ok;
+      }
+
       ReactDOM.render(<QuickscanApp />, document.getElementById('root'));
     </script>
   </body>
